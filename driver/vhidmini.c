@@ -2024,7 +2024,9 @@ OnInterruptIsr(
     int x = 0, y = 0, temp = 0;
     UNREFERENCED_PARAMETER(MessageID);
 
+
     device = WdfInterruptGetDevice(FxInterrupt);
+
     pDevice = GetDeviceContext(device);
 
     //
@@ -2072,7 +2074,6 @@ OnInterruptIsr(
 
     // Get All Points Info
     SpbDeviceWriteRead(pDevice, gtx9886_get_coor, &allBuf, sizeof(gtx9886_get_coor), sizeof(allBuf));
-   
     for (int i = 0; i < touch_count; i++)
     {
         //touchType = eventbuf[i * 8 + 1] & 0x0F;
@@ -2091,13 +2092,13 @@ OnInterruptIsr(
             y = temp;
         }
 
-        if (!(allBuf[0 + i * 8] & 0x0F) && i != 0) {
+        if ((preBuffer[1] & 0xF) == 0) {
             readReport.points[i * 6 + 0] = 0x06;
-            break; // Jump to Next Point
         }
-        else
-            readReport.points[i * 6 + 0] = 0x07;  // In Point
 
+        else {
+            readReport.points[i * 6 + 0] = 0x07;  // In Point
+        }
         readReport.points[i * 6 + 1] = touchId;
         readReport.points[i * 6 + 2] = x & 0xFF;
         readReport.points[i * 6 + 3] = (x >> 8) & 0x0F;
