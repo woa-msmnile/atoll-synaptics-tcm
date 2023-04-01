@@ -210,7 +210,12 @@ NTSTATUS
 CheckRegistryForDescriptor(
     WDFDEVICE Device
 );
-
+VOID
+SpbDeviceRead(
+    _In_ PDEVICE_CONTEXT pDevice,
+    _In_ PVOID pOutputBuffer,
+    _In_ size_t outputBufferLength
+);
 //
 // Misc definitions
 //

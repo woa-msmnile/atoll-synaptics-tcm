@@ -36,7 +36,7 @@ BYTE gtx9886_get_pre_coor[2] = { 0x41, 0x00 };
 BYTE gtx9886_get_coor[2] = { 0x41, 0x02 };
 BYTE gtx9886_clean_coor[3] = { 0x41, 0x00, 0x00};
 
-BYTE allBuf[MAX_POINT_NUM * BYTES_PER_COORD];
+BYTE eventbuf[110];
 
 ULONG XRevert = 0;
 ULONG YRevert = 0;
@@ -44,7 +44,7 @@ ULONG XYExchange = 0;
 ULONG XMin = 0;
 ULONG XMax = 1080;
 ULONG YMin = 0;
-ULONG YMax = 2340;
+ULONG YMax = 2248;
 
 
 typedef struct
@@ -1986,6 +1986,19 @@ Return Value:
         WdfRequestComplete(request, status);
     }
 }
+
+#pragma pack(1)
+
+typedef struct
+{
+    BYTE index; // index & 0x0F = id
+    BYTE reserv[6]; // unknown usage
+    UINT16 x_pos;
+    UINT16 y_pos;
+}*PREPORT_DATA;
+
+#pragma pack()
+
 BOOLEAN
 OnInterruptIsr(
     _In_  WDFINTERRUPT FxInterrupt,
@@ -2020,8 +2033,8 @@ OnInterruptIsr(
     WDFREQUEST              request;
     inputReport54_t    readReport = { 0 };
     //BYTE touchType;
-    BYTE touchId = 0;
-    int x = 0, y = 0, temp = 0;
+    //BYTE touchId = 0;
+    //int x = 0, y = 0, temp = 0;
     UNREFERENCED_PARAMETER(MessageID);
 
 
@@ -2046,66 +2059,113 @@ OnInterruptIsr(
         //       processing. The ISR should never call
         //       KeWaitForSingleObject as done below.
         //
-        
-    // Get Pre Buffer
-    BYTE preBuffer[2] = { 0 };
-    RtlZeroMemory(preBuffer,sizeof(preBuffer));
+    SpbDeviceRead(pDevice, eventbuf, sizeof(eventbuf));
+    UINT16 totalSize = eventbuf[2];
+    PREPORT_DATA pReportData = NULL;
 
-    SpbDeviceWriteRead(pDevice, gtx9886_get_pre_coor, &preBuffer[0], sizeof(gtx9886_get_pre_coor), sizeof(preBuffer));
-    
-    // preBuffer[0] EventID
-    switch (preBuffer[0])
+    if (totalSize > 2)
     {
-    case GOODIX_TOUCH_EVENT:
-        break;
-    case GOODIX_REQUEST_EVENT:
-    case GOODIX_GESTURE_EVENT:
-    case GOODIX_HOTKNOT_EVENT:
-    default:
-        goto exit;
+        BYTE idx = 0;
+        // Temp Implement Of Single Touch
+        //pReportData = (PREPORT_DATA)&eventbuf[6];
+        //readReport.DIG_TouchScreenContactCount = 1;                                     // Active Points
+        //readReport.points[0] = 0x07;                                                    // evt type: enter point
+        //readReport.points[1] = 1;                             // id
+        //readReport.points[2] = ((YMax * (pReportData->y_pos)) / 8096) & 0xFF;           // y lower
+        //readReport.points[3] = (((YMax * (pReportData->y_pos)) / 8096) >> 8) & 0x0F;    // y higher
+        //readReport.points[4] = ((XMax * (pReportData->x_pos)) / 3950) & 0xFF;           // x lower
+        //readReport.points[5] = (((XMax * (pReportData->x_pos)) / 3950) >> 8) & 0x0F;    // x higher
+        //
+        //if (eventbuf[16] != 0x5a) {
+        //    readReport.DIG_TouchScreenContactCount = 2;                                     // Active Points
+        //    pReportData = (PREPORT_DATA)&eventbuf[16];
+        //    readReport.points[6] = 0x07;
+        //    readReport.points[7] = 2;                             // id
+        //    readReport.points[8] = ((YMax * (pReportData->y_pos)) / 8096) & 0xFF;           // y lower
+        //    readReport.points[9] = (((YMax * (pReportData->y_pos)) / 8096) >> 8) & 0x0F;    // y higher
+        //    readReport.points[10] = ((XMax * (pReportData->x_pos)) / 3950) & 0xFF;           // x lower
+        //    readReport.points[11] = (((XMax * (pReportData->x_pos)) / 3950) >> 8) & 0x0F;    // x higher
+        //}
+
+
+        for (UINT16 i = 0; i + 2 < totalSize; i += 0xB) {
+            pReportData = (PREPORT_DATA)&eventbuf[i + 6];
+            readReport.points[idx * 6 + 0] = 0x07;
+            readReport.points[idx * 6 + 1] = ((pReportData->index) & 0x0F) + 1;
+
+            UINT32 x = XMax * (pReportData->y_pos);
+            x /= 4060; // Calibation
+            readReport.points[idx * 6 + 2] = x & 0xFF;          //x_l
+            readReport.points[idx * 6 + 3] = (x >> 8) & 0x0F;          //x_h
+
+            UINT32 y = YMax * (pReportData->x_pos);
+            y /= 8180; // Calibation
+            readReport.points[idx * 6 + 4] = y & 0xFF;          //y_l
+            readReport.points[idx * 6 + 5] = (y >> 8) & 0x0F;   //y_h
+
+            idx++;
+        }
+        readReport.DIG_TouchScreenContactCount = idx + 1;
+    }
+    else if(totalSize == 2){
+        readReport.DIG_TouchScreenContactCount = 1;
+        readReport.points[1] = (eventbuf[5] & 0xF) + 1; // touch id
+        readReport.points[0] = 0x06;
+    }
+    else
+    {
+        readReport.DIG_TouchScreenContactCount = 0;
     }
 
-    readReport.DIG_TouchScreenContactCount = preBuffer[1];
-    BYTE touch_count = preBuffer[1] & 0x0F;
-    if (!touch_count) goto exit; // number of points: 0x0
+    //readReport.DIG_TouchScreenContactCount = 1;
+    //readReport.reportId = 0;
+    //readReport.points[0] = 0x6;
+    //readReport.points[1] = 0x6;
+    //readReport.points[2] = 0x6;
+    //readReport.points[3] = 0x6;
+    //readReport.points[4] = 0x6;
+    //BYTE touch_count = preBuffer[1] & 0x0F;
+    //if (!touch_count) goto exit; // number of points: 0x0
     
     // Clean Buffer
-    RtlZeroMemory(allBuf, sizeof(allBuf));
+    //RtlZeroMemory(allBuf, sizeof(allBuf));
 
-    // Get All Points Info
-    SpbDeviceWriteRead(pDevice, gtx9886_get_coor, &allBuf, sizeof(gtx9886_get_coor), sizeof(allBuf));
-    for (int i = 0; i < touch_count; i++)
-    {
-        //touchType = eventbuf[i * 8 + 1] & 0x0F;
-        touchId = (allBuf[0 + i * 8] & 0x0F);
-        x = allBuf[1 + i * 8] | (allBuf[2 + i * 8] << 8);
-        y = allBuf[3 + i * 8] | (allBuf[4 + i * 8] << 8);
+    // Get All Points Inf
+    //SpbDeviceWriteRead(pDevice, gtx9886_get_coor, &allBuf, sizeof(gtx9886_get_coor), sizeof(allBuf));
+    //Pressed = TRUE;
 
-        if (XRevert == 1)
-            x = XMax - x;
-        if (YRevert == 1)
-            y = YMax - y;
-        if (XYExchange == 1)
-        {
-            temp = x;
-            x = y;
-            y = temp;
-        }
+    //for (int i = 0; i < touch_count; i++)
+    //{
+    //    //touchType = eventbuf[i * 8 + 1] & 0x0F;
+    //    touchId = (allBuf[0 + i * 8] & 0x0F);
+    //    x = allBuf[1 + i * 8] | (allBuf[2 + i * 8] << 8);
+    //    y = allBuf[3 + i * 8] | (allBuf[4 + i * 8] << 8);
 
-        if ((preBuffer[1] & 0xF) == 0) {
-            readReport.points[i * 6 + 0] = 0x06;
-        }
+    //    if (XRevert == 1)
+    //        x = XMax - x;
+    //    if (YRevert == 1)
+    //        y = YMax - y;
+    //    if (XYExchange == 1)
+    //    {
+    //        temp = x;
+    //        x = y;
+    //        y = temp;
+    //    }
 
-        else {
-            readReport.points[i * 6 + 0] = 0x07;  // In Point
-        }
-        readReport.points[i * 6 + 1] = touchId;
-        readReport.points[i * 6 + 2] = x & 0xFF;
-        readReport.points[i * 6 + 3] = (x >> 8) & 0x0F;
-        readReport.points[i * 6 + 4] = y & 0xFF;
-        readReport.points[i * 6 + 5] = (y >> 8) & 0x0F;
-    }
+    //    if ((preBuffer[1] & 0xF) == 0) {
+    //        readReport.points[i * 6 + 0] = 0x06; // leave point
+    //    }else {
+    //        readReport.points[i * 6 + 0] = 0x07;  // In Point
+    //    }
 
+    //    readReport.points[i * 6 + 1] = touchId;
+    //    readReport.points[i * 6 + 2] = x & 0xFF;
+    //    readReport.points[i * 6 + 3] = (x >> 8) & 0x0F;
+    //    readReport.points[i * 6 + 4] = y & 0xFF;
+    //    readReport.points[i * 6 + 5] = (y >> 8) & 0x0F;
+    //}
+ 
+//report:
     status = WdfIoQueueRetrieveNextRequest(
         pDevice->ManualQueue,
         &request);
@@ -2121,8 +2181,8 @@ OnInterruptIsr(
         WdfRequestComplete(request, status);
     }
 
-exit:
-    SpbDeviceWrite(pDevice, gtx9886_clean_coor, sizeof(gtx9886_clean_coor));
+//exit:
+//    SpbDeviceWrite(pDevice, gtx9886_clean_coor, sizeof(gtx9886_clean_coor));
     return fInterruptRecognized;
 }
 VOID 
@@ -2179,7 +2239,7 @@ SpbDeviceOpen(
     //SpbDeviceWrite(pDevice, cmd_scanmode, 3);
     ////drain event
     //SpbDeviceWriteRead(pDevice, cmd_readevent, eventbuf, 3, 256);
-
+    RtlZeroMemory(eventbuf, sizeof(eventbuf));
     //enable interrupt
     WdfInterruptEnable(pDevice->Interrupt);
 }
@@ -2274,6 +2334,34 @@ SpbDeviceWriteRead(
     }    
 }
 
+VOID
+SpbDeviceRead(
+    _In_ PDEVICE_CONTEXT pDevice,
+    _In_ PVOID pOutputBuffer,
+    _In_ size_t outputBufferLength
+)
+{
+    WDF_MEMORY_DESCRIPTOR  outMemoryDescriptor;
+    ULONG_PTR  bytesRead = (ULONG_PTR)NULL;
+    NTSTATUS status;
+
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outMemoryDescriptor,
+        pOutputBuffer,
+        (ULONG)outputBufferLength);
+
+    status = WdfIoTargetSendReadSynchronously(
+        pDevice->SpbController,
+        NULL,
+        &outMemoryDescriptor,
+        NULL,
+        NULL,
+        &bytesRead
+    );
+
+    if (!NT_SUCCESS(status))
+    {
+    }
+}
 NTSTATUS
 ReadDescriptorFromRegistry(
     WDFDEVICE Device
